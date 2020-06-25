@@ -1,9 +1,6 @@
 package com.shanemcnevin.app;
 
-import java.util.Arrays;
-import java.nio.ByteBuffer;
 import java.io.IOException;
-import java.nio.ByteOrder;
 import com.pi4j.io.i2c.*;
 import com.pi4j.io.gpio.*;
 import com.pi4j.io.gpio.event.GpioPinDigitalStateChangeEvent;
@@ -17,7 +14,7 @@ public class TempModule {
         final byte TMP_CFG = (byte) 0x02;
         final int TMP_CFG_MODEON = 0x7000;
         final int TMP_CFG_DRDYEN = 0x0100;
-        final int TMP_CFG_SAMPLE = 0x0000;
+        final int TMP_CFG_SAMPLE = 0x0800;
         final int TMP_CFG_INIT = TMP_CFG_MODEON | TMP_CFG_DRDYEN | TMP_CFG_SAMPLE;
         final byte TMP_CFG_INIT_BYTE_1 = (byte)(TMP_CFG_INIT >> 8);
         final byte TMP_CFG_INIT_BYTE_2 = (byte)(TMP_CFG_INIT);
@@ -43,40 +40,11 @@ public class TempModule {
                 this.writeI2CInt(TMP_CFG, TMP_CFG_INIT);
 
                 int manufacturerId = this.readI2CInt(TMP_REG_MAN_ID);
-                System.out.println("Temp Module Manufacturer ID: " + manufacturerId);
-
                 int deviceId = this.readI2CInt(TMP_REG_DEV_ID);
-                System.out.println("Temp Module Device ID: " + deviceId);
 
-		/*
-                float voltValue = (float) readI2CData(tempDevice, TMP_REQ_VOLTS);
-                System.out.println("V Val " + voltValue);
-                voltValue *= 156.25f;
-                voltValue /= 1000.0f;
-                voltValue /= 1000.0f;
-                voltValue /= 1000.0f;
-                System.out.println("Voltage Value :" + voltValue);
-
-                float dieTemp = (float) (readI2CData(tempDevice, TMP_REQ_DIE_TEMP) >> 2);
-                dieTemp *= 0.03125f;
-                System.out.println("Temp Module Die Temp: " + dieTemp);
-                dieTemp += 273.15f;
-
-                float dieTempTref = dieTemp - TMP_TREF;
-                float S = (1 + TMP_A1 * dieTempTref + TMP_A2 * dieTempTref * dieTempTref);
-                S *= TMP_S0;
-                S /= 10000000.0f;
-                S /= 10000000.0f;
-
-                float Vos = TMP_B0 + TMP_B1 * dieTempTref + TMP_B2 * dieTempTref * dieTempTref;
-                float fVobj = (voltValue - Vos) + TMP_C2 * (voltValue - Vos) * (voltValue - Vos);
-                float Tobj = (float) Math.sqrt((float) Math.sqrt(dieTemp * dieTemp * dieTemp + fVobj / S));
-
-                float tempInC = Tobj - 273.15f;
-
-                System.out.println("Temp: " + tempInC);
-		*/
-
+		if (manufacturerId != TMP006_MAN_ID || deviceId != TMP006_DEV_ID) {
+			throw new IOException("Module manufacturer or device ID mismatch. Not a TI TMP006 chip.");
+		}
 	}
 
 	void writeI2CInt (byte address, int data) throws IOException {
@@ -89,28 +57,17 @@ public class TempModule {
 	int readI2CInt (byte address) throws IOException {
 		byte[] data = new byte[2];
                 this.device.read(address, data, 0, 2);
-		System.out.println(address + " bytes: " + Arrays.toString(data));
                 return (int) ((data[0] << 8) | data[1]);
-	}
-
-	double readI2CDouble (byte address) throws IOException {
-                return (double) readI2CInt(address);
 	}
 
 	double readVolts () throws IOException {
 		byte[] data = new byte[2];
 		this.device.read(TMP_REG_VOLTS, data, 0, 2);
-		System.out.println("Bytes: " + Arrays.toString(data));
 		int msb = (int) data[0];
-		System.out.println("MSB raw: " + Integer.toBinaryString(msb));
 		msb <<= 8;
-		System.out.println("MSB: " + Integer.toBinaryString(msb));
 		int lsb = (int) data[1];
-		System.out.println("LSB raw: " + Integer.toBinaryString(lsb));
 		lsb &= BYTE_MASK;
-		System.out.println("LSB: " + Integer.toBinaryString(lsb));
 		int combined = (msb | lsb);
-		System.out.println("Combined: " + combined + " bin: " + Integer.toBinaryString(combined));
 		return combined * 156.25 / 1000.0 / 1000.0 / 1000.0;
 	}
 
