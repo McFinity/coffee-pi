@@ -3,6 +3,7 @@ package com.shanemcnevin.app;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.Arrays;
 import java.lang.Math;
+import java.io.IOException;
 import com.pi4j.io.i2c.*;
 import com.pi4j.io.gpio.*;
 import com.pi4j.io.gpio.event.GpioPinDigitalStateChangeEvent;
@@ -10,15 +11,27 @@ import com.pi4j.io.gpio.event.GpioPinListenerDigital;
 
 public class CoffeePi implements GpioPinListenerDigital {
 
-    	final ReentrantLock stateChangeLock = new ReentrantLock();
+    	final ReentrantLock stateChangeLock;
 	final GpioPinDigitalInput startButton;
 	final GpioPinDigitalInput readyButton;
 	final GpioPinDigitalInput cancelButton;
+	final TempModule tempMod;
+	final long BREW_DURATION_MILLIS = 15 * 60 * 1000; // 15 min
+	final long WARMING_DURATION_MILLIS = 30 * 60 * 1000; // 30 min
+	final double MIN_DESIRED_TEMP_C = 50.0;
+	final double MAX_DESIRED_TEMP_C = 65.0;
 
     	boolean isReady = false;
-   	boolean isStarted = false;
+   	boolean isBrewing = false;
+	boolean isWarming = false;
+	boolean isPowerOn = false;
+	long brewingStartedMillis;
+	long warmingStartedMillis;
 
-	public CoffeePi () throws InterruptedException, I2CFactory.UnsupportedBusNumberException, java.io.IOException {
+	public CoffeePi () throws InterruptedException, I2CFactory.UnsupportedBusNumberException, IOException {
+		stateChangeLock = new ReentrantLock();
+		tempMod = new TempModule(0x40);
+
 		// setup gpio
 		final GpioController gpio = GpioFactory.getInstance();
 
@@ -42,17 +55,39 @@ public class CoffeePi implements GpioPinListenerDigital {
 		cancelButton.setShutdownOptions(true);
 		cancelButton.addListener(this);
 
-		TempModule tempMod = new TempModule(0x40);
-
 		System.out.println("Starting loop...");
 
 		while(true) {
 			Thread.sleep(1000);
-			System.out.println("Temp: " + tempMod.readTempC());
 			stateChangeLock.lock();
 			try {
+				double tempC = readTempC();
+				long nowMillis = System.currentTimeMillis();
+				if (isBrewing && (nowMillis - brewingStartedMillis) >= BREW_DURATION_MILLIS) {
+					isBrewing = false;
+					isWarming = true;
+					warmingStartedMillis = nowMillis;
+				}
+				if (isWarming && (nowMillis - warmingStartedMillis) >= WARMING_DURATION_MILLIS) {
+					isWarming = false;
+					isPowerOn = false;
+				}
+				if (isWarming && tempC < MIN_DESIRED_TEMP_C) {
+					isPowerOn = true;
+				}
+				if (isWarming && tempC > MAX_DESIRED_TEMP_C) {
+					isPowerOn = false;
+				}
 				readyLed.setState(isReady);
-				relay.setState(isStarted);
+				relay.setState(isPowerOn);
+				System.out.println(
+					"isReady: " + isReady +
+					", isBrewing: " + isBrewing +
+					", isWarming: " + isWarming +
+					", Temp: " + tempC +
+					", Below Temp: " + (tempC < MIN_DESIRED_TEMP_C) +
+					", Above Temp: " + (tempC > MAX_DESIRED_TEMP_C) +
+					", isPowerOn: " + isPowerOn);
 			} finally {
 				stateChangeLock.unlock();
 			}
@@ -62,52 +97,98 @@ public class CoffeePi implements GpioPinListenerDigital {
 	@Override
 	public void handleGpioPinDigitalStateChangeEvent (GpioPinDigitalStateChangeEvent event) {
 		final GpioPin pin = event.getPin();
-		if (pin.equals(this.startButton)) {
-			this.handleStartButtonEvent(event);
+		if (pin.equals(startButton)) {
+			handleStartButtonEvent(event);
 		}
-		if (pin.equals(this.readyButton)) {
-			this.handleReadyButtonEvent(event);
+		if (pin.equals(readyButton)) {
+			handleReadyButtonEvent(event);
 		}
-		if (pin.equals(this.cancelButton)) {
-			this.handleCancelButtonEvent(event);
+		if (pin.equals(cancelButton)) {
+			handleCancelButtonEvent(event);
+		}
+	}
+
+	public boolean startBrewing() {
+		boolean wasStarted = false;
+		stateChangeLock.lock();
+		try {
+			if (!isBrewing && isReady) {
+				wasStarted = true;
+				isBrewing = true;
+				isPowerOn = true;
+				isReady = false;
+				brewingStartedMillis = System.currentTimeMillis();
+			}
+		} finally {
+			stateChangeLock.unlock();
+		}
+		return wasStarted;
+	}
+
+	public void makeReady() {
+		stateChangeLock.lock();
+		try {
+			isReady = true;
+		} finally {
+			stateChangeLock.unlock();
+		}
+	}
+
+	public void cancel() {
+		stateChangeLock.lock();
+		try {
+			isReady = false;
+			isBrewing = false;
+			isWarming = false;
+			isPowerOn = false;
+		} finally {
+			stateChangeLock.unlock();
+		}
+	}
+
+	public boolean isReady() {
+		return isReady;
+	}
+
+	public boolean isBrewing() {
+		return isBrewing;
+	}
+
+	public boolean isWarming() {
+		return isWarming;
+	}
+
+	public boolean isPowerOn() {
+		return isPowerOn;
+	}
+
+	public double readTempC() {
+		double temp = 0.0;
+		try {
+			temp = tempMod.readTempC();
+		} catch (IOException ex) {
+			System.err.println("Problem reading temp:");
+			ex.printStackTrace();
+		} finally {
+			return temp;
 		}
 	}
 
 	private void handleStartButtonEvent (GpioPinDigitalStateChangeEvent event) {
-		System.out.println("Start Button State Change: " + event.getState());
-		if (event.getState() == PinState.HIGH && this.isReady) {
-			this.stateChangeLock.lock();
-			try {
-				this.isStarted = true;
-				this.isReady = false;
-			} finally {
-				this.stateChangeLock.unlock();
-			}
+		if (event.getState() == PinState.HIGH) {
+			startBrewing();
 		}
     	}
 
 	private void handleReadyButtonEvent (GpioPinDigitalStateChangeEvent event) {
-		System.out.println("Ready Button State Change: " + event.getState());
 		if (event.getState() == PinState.HIGH) {
-			this.stateChangeLock.lock();
-			try {
-				this.isReady = true;
-			} finally {
-				this.stateChangeLock.unlock();
-			}
+			makeReady();
 		}
 	}
 
 	private void handleCancelButtonEvent (GpioPinDigitalStateChangeEvent event) {
-		System.out.println("Cancel Button State Change: " + event.getState());
 		if (event.getState() == PinState.HIGH) {
-			this.stateChangeLock.lock();
-			try {
-				this.isReady = false;
-				this.isStarted = false;
-			} finally {
-				this.stateChangeLock.unlock();
-			}
+			cancel();
 		}
 	}
 
