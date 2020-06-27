@@ -20,6 +20,7 @@ public class CoffeePi implements GpioPinListenerDigital {
 	final long WARMING_DURATION_MILLIS = 30 * 60 * 1000; // 30 min
 	final double MIN_DESIRED_TEMP_C = 50.0;
 	final double MAX_DESIRED_TEMP_C = 65.0;
+	final double TEMP_ADJ = 19.0;
 
     	boolean isReady = false;
    	boolean isBrewing = false;
@@ -170,7 +171,7 @@ public class CoffeePi implements GpioPinListenerDigital {
 			System.err.println("Problem reading temp:");
 			ex.printStackTrace();
 		} finally {
-			return temp;
+			return temp + TEMP_ADJ;
 		}
 	}
 
