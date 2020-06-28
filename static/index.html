@@ -1,0 +1,54 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- load MUI -->
+    <link href="//cdn.muicss.com/mui-0.10.3/css/mui.min.css" rel="stylesheet" type="text/css" />
+    <script src="//cdn.muicss.com/mui-0.10.3/js/mui.min.js"></script>
+    <style>
+	.coffee-modal {
+		padding: 20px;
+	}
+    </style>
+  </head>
+  <body>
+    <div class="mui-container">
+      <div class="mui-panel">
+        <h1>CoffeePi</h1>
+        <button class="mui-btn mui-btn--primary mui-btn--raised" onClick="window.getCoffee();">GET /coffee</button>
+      </div>
+    </div>
+    <script>
+	window.showModal = (message) => {
+		// initialize modal element
+		var modalEl = document.createElement('div');
+		modalEl.style.width = '300px';
+		modalEl.style.height = '200px';
+		modalEl.style.margin = '10px auto';
+		modalEl.style.backgroundColor = '#fff';
+		modalEl.innerHTML = `<div class="coffee-modal"><h2>${message}</h2></div>`;
+
+		// show modal
+		mui.overlay('on', modalEl);
+	}
+
+    	window.getCoffee = () => {
+		fetch('/coffee').then(resp => resp.json()).then(coffeeJson => {
+			if (coffeeJson.success) {
+			    window.showModal("Coffee is brewing!")
+			} else {
+				fetch('/status').then(resp => resp.json()).then(statusJson => {
+					switch (statusJson.status) {
+						case 'not ready': showModal("Oh no! The coffee maker isn't ready!"); break;
+						case 'brewing': showModal("Good news! Coffee is already brewing!"); break;
+						case 'warming': showModal("Coffee is ready and being kept warm!"); break;
+					} 
+				});
+			}
+		}); 
+	};
+    </script>
+  </body>
+</html>
