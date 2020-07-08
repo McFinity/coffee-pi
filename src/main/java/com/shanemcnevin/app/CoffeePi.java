@@ -2,24 +2,28 @@ package com.shanemcnevin.app;
 
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.Arrays;
+import java.util.Map;
+import java.util.HashMap;
 import java.lang.Math;
 import java.io.IOException;
 import com.pi4j.io.i2c.*;
 import com.pi4j.io.gpio.*;
 import com.pi4j.io.gpio.event.GpioPinDigitalStateChangeEvent;
 import com.pi4j.io.gpio.event.GpioPinListenerDigital;
+import io.javalin.Javalin;
 
 public class CoffeePi implements GpioPinListenerDigital {
 
     	final ReentrantLock stateChangeLock;
+	final GpioController gpio;
 	final GpioPinDigitalInput startButton;
 	final GpioPinDigitalInput readyButton;
 	final GpioPinDigitalInput cancelButton;
 	final TempModule tempMod;
 	final long BREW_DURATION_MILLIS = 15 * 60 * 1000; // 15 min
-	final long WARMING_DURATION_MILLIS = 30 * 60 * 1000; // 30 min
-	final double MIN_DESIRED_TEMP_C = 50.0;
-	final double MAX_DESIRED_TEMP_C = 65.0;
+	final long WARMING_DURATION_MILLIS = 60 * 60 * 1000; // 60 min
+	final double MIN_DESIRED_TEMP_C = 70.0;
+	final double MAX_DESIRED_TEMP_C = 85.0;
 	final double TEMP_ADJ = 19.0;
 
     	boolean isReady = false;
@@ -29,19 +33,12 @@ public class CoffeePi implements GpioPinListenerDigital {
 	long brewingStartedMillis;
 	long warmingStartedMillis;
 
-	public CoffeePi () throws InterruptedException, I2CFactory.UnsupportedBusNumberException, IOException {
+	public CoffeePi () throws I2CFactory.UnsupportedBusNumberException, IOException {
 		stateChangeLock = new ReentrantLock();
 		tempMod = new TempModule(0x40);
 
 		// setup gpio
-		final GpioController gpio = GpioFactory.getInstance();
-
-		// setup oututs
-		final GpioPinDigitalOutput readyLed = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_01, "ReadyLED", PinState.LOW);
-		readyLed.setShutdownOptions(true, PinState.LOW);
-
-		final GpioPinDigitalOutput relay = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_05, "Relay", PinState.LOW);
-		relay.setShutdownOptions(true, PinState.LOW);
+		 gpio = GpioFactory.getInstance();
 
 		// setup inputs
 		startButton = gpio.provisionDigitalInputPin(RaspiPin.GPIO_02, PinPullResistance.PULL_DOWN);
@@ -55,8 +52,17 @@ public class CoffeePi implements GpioPinListenerDigital {
 		cancelButton = gpio.provisionDigitalInputPin(RaspiPin.GPIO_04, PinPullResistance.PULL_DOWN);
 		cancelButton.setShutdownOptions(true);
 		cancelButton.addListener(this);
+	}
 
+	public void startLoop() throws InterruptedException, IOException {
 		System.out.println("Starting loop...");
+
+		// setup oututs
+		final GpioPinDigitalOutput readyLed = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_01, "ReadyLED", PinState.LOW);
+		readyLed.setShutdownOptions(true, PinState.LOW);
+
+		final GpioPinDigitalOutput relay = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_05, "Relay", PinState.LOW);
+		relay.setShutdownOptions(true, PinState.LOW);
 
 		while(true) {
 			Thread.sleep(1000);
@@ -193,7 +199,38 @@ public class CoffeePi implements GpioPinListenerDigital {
 		}
 	}
 
+	private Map<String, Boolean> getCoffee () {
+		Map<String, Boolean> data = new HashMap<>();
+		data.put("success", startBrewing());
+		return data;
+	}
+
+	private Map<String, String> getStatus () {
+		Map<String, String> data = new HashMap<>();
+		if (isReady()) {
+			data.put("status", "ready");
+		} else {
+			data.put("status", "not ready");
+		}
+		if (isBrewing()) {
+			data.put("status", "brewing");
+		}
+		if (isWarming()) {
+			data.put("status", "warming");
+		}
+		return data;
+	}
+
     	public static void main( String[] args ) throws InterruptedException, I2CFactory.UnsupportedBusNumberException, java.io.IOException {
-		new CoffeePi();
+		final CoffeePi pi = new CoffeePi();
+
+		Javalin app = Javalin.create(config -> {
+			config.addStaticFiles("/static");
+		}).start(7000);
+
+		app.get("/coffee", ctx -> ctx.json(pi.getCoffee()));
+		app.get("/status", ctx -> ctx.json(pi.getStatus()));
+
+		pi.startLoop();
     	}
 }
